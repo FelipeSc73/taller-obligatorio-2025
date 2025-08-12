@@ -1,0 +1,64 @@
+---
+- name: NFS server en CentOS
+  hosts: webserver
+  become: yes
+  gather_facts: yes
+
+  vars:
+    nfs_export_dir: /var/nfs_shared
+    allowed_cidr: 192.168.1.0/24
+
+  tasks:
+    - name: Instalar NFS y firewalld
+      ansible.builtin.dnf:
+        name:
+          - nfs-utils
+          - firewalld
+        state: present
+
+    - name: Asegurar firewalld activo
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: Abrir 2049/tcp
+      ansible.builtin.command: firewall-cmd --permanent --add-port=2049/tcp
+      register: fw_port
+      changed_when: "'success' in fw_port.stdout"
+
+    - name: Reload firewalld si cambió
+      ansible.builtin.command: firewall-cmd --reload
+      when: fw_port is changed
+
+    - name: Crear directorio exportado
+      ansible.builtin.file:
+        path: "{{ nfs_export_dir }}"
+        state: directory
+        owner: nobody
+        group: nobody
+        mode: '0777'
+
+    - name: Escribir /etc/exports
+      ansible.builtin.copy:
+        dest: /etc/exports
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          {{ nfs_export_dir }} {{ allowed_cidr }}(rw,sync,no_subtree_check,no_root_squash)
+      notify: Reload exports y reiniciar nfs
+
+    - name: Asegurar nfs-server iniciado y habilitado
+      ansible.builtin.service:
+        name: nfs-server
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Reload exports y reiniciar nfs
+      block:
+        - ansible.builtin.command: exportfs -r
+        - ansible.builtin.service:
+            name: nfs-server
+            state: restarted
