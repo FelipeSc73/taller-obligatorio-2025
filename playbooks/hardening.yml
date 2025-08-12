@@ -1,0 +1,90 @@
+---
+- name: Hardening Ubuntu
+  hosts: ubuntu
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Update & upgrade
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: dist
+      register: apt_upgrade
+
+    - name: Configurar UFW (deny incoming, allow outgoing & ssh)
+      ansible.builtin.shell: |
+        ufw --force reset
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow ssh
+        ufw --force enable
+      args:
+        warn: false
+
+    - name: Solo clave pública (PasswordAuthentication no)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: Restart ssh
+
+    - name: Root login no
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: Restart ssh
+
+    - name: Asegurar PubkeyAuthentication yes
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PubkeyAuthentication'
+        line: 'PubkeyAuthentication yes'
+      notify: Restart ssh
+
+    - name: Instalar fail2ban
+      ansible.builtin.apt:
+        name: fail2ban
+        state: present
+
+    - name: Configurar jail.local mínimo
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.local
+        mode: '0644'
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          logpath = /var/log/auth.log
+          maxretry = 5
+          bantime = 600
+          findtime = 600
+      notify: Restart fail2ban
+
+    - name: Habilitar/arrancar fail2ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    - name: ¿Reboot requerido?
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: rb
+
+    - name: Reboot si corresponde
+      ansible.builtin.reboot:
+        msg: "Reinicio por hardening/upgrade"
+        reboot_timeout: 600
+      when: rb.stat.exists or apt_upgrade is changed
+
+  handlers:
+    - name: Restart ssh
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+    - name: Restart fail2ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: restarted
