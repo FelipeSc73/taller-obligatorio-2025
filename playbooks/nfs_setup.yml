@@ -1,4 +1,4 @@
----
+----
 - name: NFS server en CentOS
   hosts: webserver
   become: yes
@@ -62,3 +62,4 @@
         - ansible.builtin.service:
             name: nfs-server
             state: restarted
+
